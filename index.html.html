@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>HCSO FTD Scheduler v8</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#0d1117;color:#e6edf3;font-family:'IBM Plex Sans',sans-serif;}
+input,select,button,textarea{font-family:inherit;}
+::-webkit-scrollbar{width:6px;height:6px;}
+::-webkit-scrollbar-track{background:#0d1117;}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useRef,useMemo} = React;
+const SUPA_URL = 'https://seksofgoqhtisifobadc.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNla3NvZmdvcWh0aXNpZm9iYWRjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2NTk5NTIsImV4cCI6MjA5MjIzNTk1Mn0.M3wevLXB_0JFwixX3FxVSFPj4w_uRkgOBBapqnuUIMs';
+const db = window.supabase.createClient(SUPA_URL, SUPA_KEY);
+
+function LoginScreen({onLogin}) {
+  const [email,setEmail]=useState('');
+  const [pw,setPw]=useState('');
+  const [err,setErr]=useState('');
+  const [busy,setBusy]=useState(false);
+  async function go(e){
+    e.preventDefault();setBusy(true);setErr('');
+    const {data,error}=await db.auth.signInWithPassword({email,password:pw});
+    if(error){setErr(error.message);setBusy(false);return;}
+    onLogin(data.user);
+  }
+  return(
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:'#0d1117'}}>
+      <div style={{background:'#161b22',border:'1px solid #c9a84c',borderRadius:12,padding:32,width:320,boxShadow:'0 8px 32px rgba(0,0,0,.6)'}}>
+        <div style={{textAlign:'center',marginBottom:24}}>
+          <div style={{fontSize:36,marginBottom:8}}>⭐</div>
+          <div style={{fontFamily:'monospace',fontSize:15,fontWeight:700,color:'#c9a84c',letterSpacing:1}}>HILLSBOROUGH COUNTY</div>
+          <div style={{fontFamily:'monospace',fontSize:11,color:'#7a9e82',marginBottom:4}}>SHERIFF'S OFFICE</div>
+          <div style={{fontFamily:'monospace',fontSize:11,color:'#8b949e'}}>Field Training Scheduler</div>
+        </div>
+        <form onSubmit={go}>
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:10,fontWeight:600,color:'#8b949e',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>Email</div>
+            <input value={email} onChange={e=>setEmail(e.target.value)} type="email" required autoComplete="email"
+              style={{width:'100%',padding:'9px 12px',background:'#21262d',border:'1px solid #30363d',borderRadius:6,color:'#e6edf3',fontSize:13,outline:'none'}}/>
+          </div>
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:10,fontWeight:600,color:'#8b949e',textTransform:'uppercase',letterSpacing:.5,marginBottom:4}}>Password</div>
+            <input value={pw} onChange={e=>setPw(e.target.value)} type="password" required autoComplete="current-password"
+              style={{width:'100%',padding:'9px 12px',background:'#21262d',border:'1px solid #30363d',borderRadius:6,color:'#e6edf3',fontSize:13,outline:'none'}}/>
+          </div>
+          {err&&<div style={{color:'#f85149',fontSize:12,marginBottom:10}}>{err}</div>}
+          <button type="submit" disabled={busy}
+            style={{width:'100%',padding:'10px',borderRadius:6,background:'#c9a84c',color:'#0d1117',border:'none',fontSize:13,fontWeight:700,cursor:'pointer'}}>
+            {busy?'Signing in...':'Sign In'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+async function loadAll(){
+  const [a,b,c,d,e,f,g,h,i]=await Promise.all([
+    db.from('ftds').select('*').order('id'),
+    db.from('classes').select('*').order('id'),
+    db.from('recruits').select('*').order('id'),
+    db.from('time_off').select('*'),
+    db.from('overrides').select('*'),
+    db.from('reassignments').select('*'),
+    db.from('manual_ftds').select('*'),
+    db.from('rec_sick_days').select('*'),
+    db.from('exclusions').select('*'),
+  ]);
+  return {ftds:a.data||[],classes:b.data||[],recruits:c.data||[],timeOff:d.data||[],overrides:e.data||[],reassign:f.data||[],manual:g.data||[],sick:h.data||[],excl:i.data||[]};
+}
+
+function toState(raw){
+  const ftds=raw.ftds.map(f=>({id:f.id,name:f.name,shift:f.shift}));
+  const classes=raw.classes.map(cls=>{
+    const recs=raw.recruits.filter(r=>r.class_id===cls.id).map(r=>({
+      id:r.id,name:r.name,remedial:r.remedial||{},specialtySlots:r.specialty_slots||[],phaseOverrides:r.phase_overrides||{}
+    }));
+    const timeOff={};
+    raw.timeOff.filter(t=>t.class_id===cls.id).forEach(t=>{
+      if(!timeOff[t.ftd_id])timeOff[t.ftd_id]=new Set();
+      timeOff[t.ftd_id].add(t.date_key);
+    });
+    const overrides={};
+    raw.overrides.filter(o=>o.class_id===cls.id).forEach(o=>{overrides[o.key]=o.value;});
+    const reassignments={};
+    raw.reassign.filter(r=>r.class_id===cls.id).forEach(r=>{reassignments[r.key]={ftdId:r.ftd_id,ftdName:r.ftd_name,fromDk:r.from_dk};});
+    const manualFtds={};
+    raw.manual.filter(m=>m.class_id===cls.id).forEach(m=>{manualFtds[m.key]=m.ftd_id;});
+    const exRecs=new Set(raw.excl.filter(e=>e.class_id===cls.id&&e.type==='recruit').map(e=>e.ref_id));
+    const recSickDays={};
+    raw.sick.filter(s=>recs.some(r=>r.id===s.recruit_id)).forEach(s=>{
+      if(!recSickDays[s.recruit_id])recSickDays[s.recruit_id]=new Set();
+      recSickDays[s.recruit_id].add(s.date_key);
+    });
+    return {id:cls.id,name:cls.name,startDate:cls.start_date,recs,timeOff,overrides,reassignments,manualFtds,exRecs,recSickDays};
+  });
+  const exFtds=new Set(raw.excl.filter(e=>e.type==='ftd').map(e=>e.ref_id));
+  return {ftds,classes,exFtds};
+}
+
+async function applyPatch(p){
+  if(p.type==='addFtd') await db.from('ftds').insert({name:p.name,shift:p.shift});
+  else if(p.type==='deleteFtd') await db.from('ftds').delete().eq('id',p.id);
+  else if(p.type==='addClass') await db.from('classes').insert({name:p.name,start_date:p.startDate});
+  else if(p.type==='deleteClass') await db.from('classes').delete().eq('id',p.id);
+  else if(p.type==='updateClass') await db.from('classes').update({name:p.name,start_date:p.startDate}).eq('id',p.id);
+  else if(p.type==='addRecruit') await db.from('recruits').insert({class_id:p.classId,name:p.name,remedial:{},specialty_slots:[],phase_overrides:{}});
+  else if(p.type==='deleteRecruit') await db.from('recruits').delete().eq('id',p.id);
+  else if(p.type==='updateRecruit') await db.from('recruits').update({remedial:p.remedial,specialty_slots:p.specialtySlots,phase_overrides:p.phaseOverrides}).eq('id',p.id);
+  else if(p.type==='addTimeOff') await db.from('time_off').upsert({class_id:p.classId,ftd_id:p.ftdId,date_key:p.dk},{onConflict:'class_id,ftd_id,date_key'});
+  else if(p.type==='removeTimeOff') await db.from('time_off').delete().eq('class_id',p.classId).eq('ftd_id',p.ftdId).eq('date_key',p.dk);
+  else if(p.type==='setOverride') await db.from('overrides').upsert({class_id:p.classId,key:p.key,value:p.value},{onConflict:'class_id,key'});
+  else if(p.type==='clearOverride') await db.from('overrides').delete().eq('class_id',p.classId).eq('key',p.key);
+  else if(p.type==='setReassign') await db.from('reassignments').upsert({class_id:p.classId,key:p.key,ftd_id:p.ftdId,ftd_name:p.ftdName,from_dk:p.fromDk},{onConflict:'class_id,key'});
+  else if(p.type==='clearReassign') await db.from('reassignments').delete().eq('class_id',p.classId).eq('key',p.key);
+  else if(p.type==='setManualFtd') await db.from('manual_ftds').upsert({class_id:p.classId,key:p.key,ftd_id:p.ftdId},{onConflict:'class_id,key'});
+  else if(p.type==='toggleExclusion'){
+    if(p.excluded) await db.from('exclusions').upsert({class_id:p.classId||0,type:p.exType,ref_id:p.refId},{onConflict:'class_id,type,ref_id'});
+    else await db.from('exclusions').delete().eq('class_id',p.classId||0).eq('type',p.exType).eq('ref_id',p.refId);
+  } else if(p.type==='toggleSickDay'){
+    if(p.sick) await db.from('rec_sick_days').upsert({class_id:p.classId,recruit_id:p.recruitId,date_key:p.dk},{onConflict:'class_id,recruit_id,date_key'});
+    else await db.from('rec_sick_days').delete().eq('class_id',p.classId).eq('recruit_id',p.recruitId).eq('date_key',p.dk);
+  }
+}
+
+function AppWrapper(){
+  const [user,setUser]=useState(null);
+  const [profile,setProfile]=useState(null);
+  const [state,setState]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [loadErr,setLoadErr]=useState(null);
+
+  async function refresh(){
+    try{
+      const raw=await loadAll();
+      setState(toState(raw));
+      setLoadErr(null);
+    } catch(e){
+      console.error('Load error:',e);
+      setLoadErr(e.message);
+      setState({ftds:[],classes:[],exFtds:new Set()});
+    }
+  }
+  async function getProfile(uid){
+    try{
+      const {data}=await db.from('profiles').select('*').eq('id',uid).single();
+      setProfile(data);
+    } catch(e){
+      console.error('Profile error:',e);
+    }
+  }
+
+  useEffect(()=>{
+    db.auth.getSession().then(async ({data:{session}})=>{
+      if(session?.user){
+        setUser(session.user);
+        await getProfile(session.user.id);
+        await refresh();
+      }
+      setLoading(false);
+    });
+    const {data:{subscription}}=db.auth.onAuthStateChange(async (_,session)=>{
+      if(session?.user){setUser(session.user);await getProfile(session.user.id);await refresh();}
+      else{setUser(null);setProfile(null);setState(null);}
+    });
+    return ()=>subscription.unsubscribe();
+  },[]);
+
+  if(loading) return(
+    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#0d1117',gap:12}}>
+      <div style={{color:'#c9a84c',fontSize:24}}>⭐</div>
+      <div style={{color:'#8b949e',fontSize:13}}>Loading HCSO FTD Scheduler...</div>
+    </div>
+  );
+  if(!user) return <LoginScreen onLogin={async u=>{setUser(u);await getProfile(u.id);await refresh();}}/>;
+  if(!state) return(
+    <div style={{minHeight:'100vh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'#0d1117',gap:12}}>
+      <div style={{color:'#c9a84c',fontSize:24}}>⭐</div>
+      <div style={{color:'#8b949e',fontSize:13}}>Loading schedule data...</div>
+      {loadErr&&<div style={{color:'#f85149',fontSize:11,maxWidth:300,textAlign:'center'}}>{loadErr}</div>}
+    </div>
+  );
+
+  const isAdmin=profile?.role==='admin';
+
+  return(
+    <div>
+      {saving&&<div style={{position:'fixed',top:0,left:0,right:0,height:3,background:'#c9a84c',zIndex:9999}}/>}
+      <SchedulerApp
+        initialFtds={state.ftds}
+        initialClasses={state.classes}
+        initialExFtds={state.exFtds}
+        isAdmin={isAdmin}
+        userEmail={user.email}
+        onLogout={async()=>{await db.auth.signOut();}}
+        onSave={async patch=>{
+          if(!isAdmin)return;
+          setSaving(true);
+          try{await applyPatch(patch);await refresh();}
+          catch(e){console.error('Save error:',e);}
+          finally{setSaving(false);}
+        }}
+        saving={saving}
+      />
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<AppWrapper/>);
+</script>
+<script type="text/babel" data-presets="react">
+
+
+const SHIFTS = ["Day","Mid","Night"];
+const SC = {Day:"D",Mid:"M",Night:"N"};
+const START = new Date(2026,3,15,12,0,0);
+const WORK_OFFSETS = new Set([0,1,5,6,9,10,11]);
+const ROTATIONS = [
+  ["Day","Mid","Night","Day"],
+  ["Mid","Night","Day","Mid"],
+  ["Night","Day","Mid","Night"],
+];
+const PHASE_BASE = [14,14,14,7];
+const PHASE_HDR = ["ph1h","ph2h","ph3h","ph4h"];
+const SPEC_TYPES = [
+  {key:"ai", label:"Accidental Investigator", short:"AI",  days:2, color:"#2ea8a8", bg:"rgba(46,168,168,0.13)"},
+  {key:"dui",label:"DUI Enforcement",         short:"DUI", days:2, color:"#e8724a", bg:"rgba(232,114,74,0.15)"},
+];
+
+function addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r;}
+function dayDiff(a,b){return Math.round((b-a)/86400000);}
+function fmtS(d){const x=new Date(d);const D=["Su","Mo","Tu","We","Th","Fr","Sa"];return`${D[x.getDay()]} ${x.getMonth()+1}/${x.getDate()}`;}
+function fmtMD(d){const x=new Date(d);return`${x.getMonth()+1}/${x.getDate()}`;}
+function dkey(d){return new Date(d).toDateString();}
+function isWork(date){
+  const diff=dayDiff(START,date);
+  return WORK_OFFSETS.has(((diff%14)+14)%14);
+}
+function resolveSpec(startDate,slots){
+  const s=new Set();
+  slots.forEach(slot=>{
+    const ti=SPEC_TYPES.find(t=>t.key===slot.typeKey);if(!ti)return;
+    if(slot.startDate){
+      // Date range mode: walk from startDate to endDate, mark working days
+      const sd=slot.startDate.split("-");const ed=(slot.endDate||slot.startDate).split("-");
+      let cur=new Date(Number(sd[0]),Number(sd[1])-1,Number(sd[2]),12,0,0);
+      const end=new Date(Number(ed[0]),Number(ed[1])-1,Number(ed[2]),12,0,0);
+      let i=0;
+      while(cur<=end&&i<100){i++;if(isWork(cur))s.add(dkey(cur));cur=addDays(cur,1);}
+    } else {
+      // Legacy insertAfter mode
+      let cur=new Date(startDate);let tr=0;let i=0;
+      while(tr<(slot.insertAfter||0)&&i<400){i++;if(isWork(cur)&&!s.has(dkey(cur)))tr++;cur=addDays(cur,1);}
+      let m=0;let j=0;
+      while(m<ti.days&&j<100){j++;if(isWork(cur)){s.add(dkey(cur));m++;}cur=addDays(cur,1);}
+    }
+  });
+  return s;
+}
+function buildPhDays(startDate,total,specSet){
+  const out=[];let cur=new Date(startDate);let tr=0;let s=0;
+  while(tr<total&&s<600){s++;
+    if(!isWork(cur)){cur=addDays(cur,1);continue;}
+    const d=dkey(cur);
+    out.push(specSet.has(d)?{date:new Date(cur),dk:d,kind:"spec"}:{date:new Date(cur),dk:d,kind:"train",ti:tr});
+    if(!specSet.has(d))tr++;
+    cur=addDays(cur,1);
+  }
+  return out;
+}
+function hasLongBlock(fid,days,to){
+  if(!to[fid])return false;
+  let run=0;
+  for(const d of days){if(to[fid].has(d.dk)){run++;if(run>=4)return true;}else run=0;}
+  return false;
+}
+function buildSched(recruits,ftds,timeOff,overrides,ras,classStart,manualFtds,initCommitted,recSickDays){
+  const res={};
+  const committed={};// {dk: Set<ftdId>}
+  // Seed with cross-class commitments
+  if(initCommitted){Object.entries(initCommitted).forEach(([dk,fids])=>{committed[dk]=new Set(fids);});}
+  // tracks FTDs already assigned per day within this class
+  recruits.forEach((rec,ri)=>{
+    const rot=ROTATIONS[ri%3];const phases=[];let ps;if(classStart){const cp=classStart.split("-");ps=new Date(Number(cp[0]),Number(cp[1])-1,Number(cp[2]),12,0,0);}else{ps=new Date(START);}
+    PHASE_BASE.forEach((defaultBase,pi)=>{
+      const shift=rot[pi];const base=rec.phaseOverrides?.[pi]??defaultBase;const remData=rec.remedial?.[pi];const remEx=remData?.days||remData||0;const remStart=remData?.startDate||null;const total=base+remEx;
+      const slots=(rec.specialtySlots||[]).filter(s=>s.phaseIndex===pi);
+      const specSet=resolveSpec(ps,slots);
+      const sftds=ftds.filter(f=>f.shift===shift);
+      // Build phase days
+      let raw;
+      if(remStart&&remEx>0){
+        // Build base training days (14) from phase start
+        const baseRaw=buildPhDays(ps,base,specSet);
+        // Insert remEx remedial days starting at remStart date
+        const rsDate=new Date(remStart+"T12:00:00");
+        const before=baseRaw.filter(e=>e.date<rsDate);
+        const after=baseRaw.filter(e=>e.date>=rsDate);
+        let cur=new Date(rsDate);let added=0;const remDays=[];let sf=0;
+        while(added<remEx&&sf<200){sf++;if(isWork(cur)){remDays.push({date:new Date(cur),dk:dkey(cur),kind:"train",ti:before.length+added,isRem:true});added++;}cur=addDays(cur,1);}
+        const afterStart=remDays.length>0?addDays(remDays[remDays.length-1].date,1):new Date(rsDate);
+        let reCur=new Date(afterStart);let ri2=0;const reAfter=[];let sf2=0;
+        while(ri2<after.length&&sf2<400){sf2++;if(isWork(reCur)){reAfter.push({...after[ri2],date:new Date(reCur),dk:dkey(reCur)});ri2++;} reCur=addDays(reCur,1);}
+        raw=[...before,...remDays,...reAfter];
+      } else {
+        raw=buildPhDays(ps,total,specSet);
+      }
+      // Apply sick days AFTER raw is built (works with both remedial and plain phases)
+      const sickSet=new Set((recSickDays||{})[rec.id]||[]);
+      if(sickSet.size>0){
+        const sickInPhase=[...sickSet].filter(dk=>raw.some(e=>e.dk===dk&&e.kind==="train"||e.kind==="out"?false:e.dk===dk));
+        // Find sick days that fall on training days in this phase
+        const sickTrainDks=new Set(raw.filter(e=>e.kind==="train"&&sickSet.has(e.dk)).map(e=>e.dk));
+        if(sickTrainDks.size>0){
+          // Build extra days to extend the phase
+          const lastDay=raw[raw.length-1]?.date;
+          let extCur=lastDay?addDays(lastDay,1):new Date(ps);
+          let extAdded=0;const extDays=[];let esf=0;
+          while(extAdded<sickTrainDks.size&&esf<200){esf++;if(isWork(extCur)&&!sickSet.has(dkey(extCur))){extDays.push({date:new Date(extCur),dk:dkey(extCur),kind:"train",ti:base-1,isSickExt:true});extAdded++;}extCur=addDays(extCur,1);}
+          // Replace sick training days with OUT, append extension days
+          raw=raw.map(e=>sickTrainDks.has(e.dk)?{...e,kind:"out",isSick:true}:e);
+          raw=[...raw,...extDays];
+          raw.sort((a,b)=>a.date-b.date);
+        }
+      }
+      // Check for manual FTD assignment
+      const manKey=rec.id+"_"+pi;
+      const manFtdId=(manualFtds||{})[manKey];
+      const manFtd=manFtdId?ftds.find(f=>f.id===Number(manFtdId))||null:null;
+      const isManual=!!manFtd;
+      let pftd=manFtd||null;
+      if(!pftd&&pi===3){const p1=phases[0]?.pftd;if(p1&&p1.shift===shift){
+        // Check Phase 4 FTD is not committed on these days
+        const p4Days=raw.filter(e=>e.kind==="train").map(e=>e.dk);
+        const p1Free=p4Days.every(dk=>!committed[dk]||!committed[dk].has(p1.id));
+        if(p1Free)pftd=p1;
+      }}
+      if(!pftd){
+        // Find least-busy available FTD not double-booked on any phase day
+        const phaseDks=raw.filter(e=>e.kind==="train").map(e=>e.dk);
+        // Score each FTD by how many phase days they're already committed
+        const scored=sftds.map(f=>{
+          const conflicts=phaseDks.filter(dk=>committed[dk]&&committed[dk].has(f.id)).length;
+          const load=Object.values(committed).filter(s=>s.has(f.id)).length;
+          return{f,conflicts,load};
+        });
+        // Pick FTD with fewest conflicts (ties broken by least total load)
+        scored.sort((a,b)=>a.conflicts-b.conflicts||a.load-b.load);
+        if(scored.length>0){
+          pftd=scored[0].f;
+          // Mark this pftd as committed for all phase days (even ones with conflicts)
+          // The fill-in logic will cover conflicted days automatically via timeOff
+        }
+      }
+      const days=raw.map(e=>{
+        const okey=`${rec.id}_${e.dk}`;const ov=overrides[okey]||null;
+        if(e.kind==="spec"){
+          let sk=slots[0]?.typeKey||"ai";
+          for(const sl of slots){const t=resolveSpec(ps,[sl]);if(t.has(e.dk)){sk=sl.typeKey;break;}}
+          return{...e,ftdId:null,ftdName:null,isFill:false,isOv:false,isRem:false,sk};
+        }
+        const isRem=e.isRem||e.ti>=base;
+        if(ov)return{...e,ftdId:"ov",ftdName:ov,isFill:true,isOv:true,isRem,pName:pftd?.name||null,sk:null};
+        const raKey=rec.id+"_"+(pi+1);const ra=(ras||{})[raKey]||null;
+        const raFtd=ra?ftds.find(f=>f.id===ra.ftdId)||{id:"m",name:ra.ftdName}:null;
+        if(raFtd&&Math.round((e.date-new Date(ra.fromDk))/86400000)>=0)return{...e,ftdId:raFtd.id,ftdName:raFtd.name,isFill:false,isOv:false,isRem,isRa:true,pName:pftd?.name||null,sk:null};
+        const pOff=!isManual&&pftd&&(timeOff[pftd.id]?.has(e.dk)||(committed[e.dk]&&committed[e.dk].has(pftd.id)&&committed[e.dk].size>1));
+        if(pOff){
+          const fill=sftds.find(f=>f.id!==pftd.id&&!timeOff[f.id]?.has(e.dk)&&(!committed[e.dk]||!committed[e.dk].has(f.id)))||null;
+          return{...e,ftdId:fill?.id||null,ftdName:fill?.name||"UNASSIGNED",isFill:true,isOv:false,isRem,pName:pftd.name,sk:null};
+        }
+        return{...e,ftdId:pftd?.id||null,ftdName:pftd?.name||"UNASSIGNED",isFill:false,isOv:false,isRem,pName:pftd?.name||null,sk:null};
+      });
+      const last=raw[raw.length-1]?.date;
+      let ns=last?addDays(last,1):new Date(ps);
+      let sf=0;while(!isWork(ns)&&sf<20){ns=addDays(ns,1);sf++;}
+      ps=ns;
+      phases.push({num:pi+1,shift,pftd,total,base,remEx,specCnt:days.filter(d=>d.kind==="spec").length,days});
+      // Record this FTD's commitment for all training days
+      if(pftd){days.filter(d=>d.kind==="train"&&d.ftdId&&d.ftdId!=="ov").forEach(d=>{
+        if(!committed[d.dk])committed[d.dk]=new Set();
+        // Record who actually trained that day (could be fill-in), not just pftd
+        committed[d.dk].add(Number(d.ftdId));
+        // Also record pftd as "primary" commitment so they don't get double-assigned
+        committed[d.dk].add(pftd.id);
+      });}
+    });
+    res[rec.id]={rec,phases};
+  });
+  return res;
+}
+
+const INIT_FTDS=[
+  {id:1,name:"T. Morrison",shift:"Day"},{id:2,name:"R. Castillo",shift:"Day"},
+  {id:3,name:"K. Patel",shift:"Day"},{id:4,name:"J. Williams",shift:"Day"},
+  {id:5,name:"D. Chen",shift:"Mid"},{id:6,name:"A. Torres",shift:"Mid"},
+  {id:7,name:"M. Johnson",shift:"Mid"},{id:8,name:"S. Davis",shift:"Mid"},
+  {id:9,name:"B. Martinez",shift:"Night"},{id:10,name:"C. Anderson",shift:"Night"},
+  {id:11,name:"L. Thompson",shift:"Night"},{id:12,name:"P. Garcia",shift:"Night"},
+];
+const INIT_RECS=["R. Adams","J. Baker","M. Cooper","T. Evans","S. Foster","K. Green",
+  "L. Harris","D. Irving","N. James","A. King","C. Lopez","B. Moore",
+].map((name,i)=>({id:i+1,name,remedial:{},specialtySlots:[]}));
+
+function phColor(n){return["#3fb950","#388bfd","#d29922","#a371f7"][n-1]||"#8b949e";}
+function phBg(n){return["rgba(63,185,80,.15)","rgba(56,139,253,.15)","rgba(210,153,34,.15)","rgba(163,113,247,.15)"][n-1]||"";}
+function shiftColor(sh){return sh==="Day"?["rgba(210,153,34,0.13)","#d29922"]:sh==="Mid"?["rgba(56,139,253,0.13)","#388bfd"]:["rgba(163,113,247,0.13)","#a371f7"];}
+
+function Popup({rec,date,cur,pName,onSave,onClear,onClose,onSick,isSick,pi,existingSpec,existingRem,isSpec,specKey,onSpecAdd,onSpecRemove,onRemAdd,onRemRemove,shiftFtds,top,left}){
+  const [mode,setMode]=useState(isSpec?"specialty":isSick?"sick":"fill");
+  const [v,setV]=useState(cur||"");
+  const [specType,setSpecType]=useState(specKey||existingSpec?.typeKey||"ai");
+  const [remDays,setRemDays]=useState(existingRem?.days||existingRem||1);
+  const [useDate,setUseDate]=useState(!!(existingRem?.startDate));
+  const ref=useRef(null);
+  useEffect(()=>{if(mode==="fill")setTimeout(()=>ref.current?.focus(),50);},[mode]);
+  const dateStr=typeof date==="string"?date:date?.toLocaleDateString?.("en-US",{month:"short",day:"numeric"});
+  const phColors=["#3fb950","#388bfd","#d29922","#a371f7"];
+  const phCol=phColors[pi]||"#8b949e";
+
+  return(
+    <div onClick={e=>e.stopPropagation()} style={{position:"fixed",zIndex:600,background:"#161b22",border:`1px solid ${phCol}`,borderRadius:8,padding:14,boxShadow:"0 8px 32px rgba(0,0,0,.8)",width:300,top,left}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div>
+          <div style={{fontSize:12,fontWeight:600,color:"#e6edf3"}}>{rec?.name}</div>
+          <div style={{fontSize:10,color:"#8b949e"}}>{dateStr} · Phase {(pi||0)+1}</div>
+        </div>
+        <button onClick={onClose} style={{background:"none",border:"none",color:"#8b949e",fontSize:16,cursor:"pointer",padding:"0 4px"}}>✕</button>
+      </div>
+      <div style={{display:"flex",gap:4,marginBottom:12}}>
+        <button onClick={()=>setMode("fill")} style={{flex:1,padding:"5px 2px",borderRadius:5,border:`1.5px solid ${mode==="fill"?phCol:"#30363d"}`,background:mode==="fill"?"rgba(56,139,253,0.1)":"none",color:mode==="fill"?"#e6edf3":"#8b949e",fontSize:10,fontWeight:600,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}><span style={{fontSize:14}}>🔄</span><span>Fill-in</span></button>
+        <button onClick={()=>setMode("sick")} style={{flex:1,padding:"5px 2px",borderRadius:5,border:`1.5px solid ${mode==="sick"?phCol:"#30363d"}`,background:mode==="sick"?"rgba(56,139,253,0.1)":"none",color:mode==="sick"?"#e6edf3":"#8b949e",fontSize:10,fontWeight:600,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}><span style={{fontSize:14}}>🤒</span><span>Out</span></button>
+        <button onClick={()=>setMode("specialty")} style={{flex:1,padding:"5px 2px",borderRadius:5,border:`1.5px solid ${mode==="specialty"?phCol:"#30363d"}`,background:mode==="specialty"?"rgba(56,139,253,0.1)":"none",color:mode==="specialty"?"#e6edf3":"#8b949e",fontSize:10,fontWeight:600,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}><span style={{fontSize:14}}>🎓</span><span>Specialty</span></button>
+        <button onClick={()=>setMode("remedial")} style={{flex:1,padding:"5px 2px",borderRadius:5,border:`1.5px solid ${mode==="remedial"?phCol:"#30363d"}`,background:mode==="remedial"?"rgba(56,139,253,0.1)":"none",color:mode==="remedial"?"#e6edf3":"#8b949e",fontSize:10,fontWeight:600,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}><span style={{fontSize:14}}>📋</span><span>Remedial</span></button>
+      </div>
+      {mode==="fill"&&<div>
+        <div style={{fontSize:10,color:"#8b949e",marginBottom:6}}>Primary: {pName||"—"}</div>
+        {shiftFtds&&shiftFtds.length>0
+          ?<div>
+            <div style={{fontSize:10,color:"#8b949e",marginBottom:6}}>Available {shiftFtds[0]?.shift} shift FTDs:</div>
+            <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:180,overflowY:"auto",marginBottom:8}}>
+              {shiftFtds.map(f=><button key={f.id} onClick={()=>onSave(f.name)} style={{padding:"8px 12px",borderRadius:5,background:"#21262d",border:"1px solid #388bfd",color:"#e6edf3",fontSize:13,textAlign:"left",cursor:"pointer",fontWeight:500,display:"flex",justifyContent:"space-between",alignItems:"center"}}><span>{f.name}</span><span style={{fontSize:10,padding:"2px 6px",borderRadius:4,background:"rgba(56,139,253,0.15)",color:"#388bfd"}}>{f.shift}</span></button>)}
+            </div>
+            <div style={{fontSize:10,color:"#8b949e",marginBottom:4}}>Or type a name:</div>
+          </div>
+          :null}
+        <input ref={ref} value={v} onChange={e=>setV(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&v.trim())onSave(v.trim());if(e.key==="Escape")onClose();}}
+          style={{width:"100%",padding:"7px 10px",background:"#21262d",border:"1px solid #e8724a",borderRadius:6,color:"#e6edf3",fontSize:13,outline:"none",boxSizing:"border-box"}}
+          placeholder="Type fill-in name..."/>
+        <div style={{display:"flex",gap:6,marginTop:8}}>
+          <button onClick={()=>v.trim()&&onSave(v.trim())} style={{flex:1,padding:"6px",borderRadius:5,background:"#e8724a",color:"#fff",border:"none",fontSize:12,fontWeight:600,cursor:"pointer"}}>Save</button>
+          {cur&&<button onClick={onClear} style={{padding:"6px 10px",borderRadius:5,background:"none",border:"1px solid #f85149",color:"#f85149",fontSize:12,cursor:"pointer"}}>Clear</button>}
+        </div>
+      </div>}
+      {mode==="sick"&&<div>
+        <div style={{fontSize:11,color:"#8b949e",marginBottom:10,lineHeight:1.5}}>{isSick?"Recruit is OUT this day — click to restore.":"Mark recruit absent. Day won't count toward training, phase end pushes back."}</div>
+        <button onClick={()=>onSick()} style={{width:"100%",padding:"8px",borderRadius:5,background:isSick?"rgba(63,185,80,0.15)":"rgba(248,81,73,0.15)",border:`1px solid ${isSick?"#3fb950":"#f85149"}`,color:isSick?"#3fb950":"#f85149",fontSize:12,fontWeight:600,cursor:"pointer"}}>{isSick?"✅ Restore Training Day":"🤒 Mark Recruit Out"}</button>
+      </div>}
+      {mode==="specialty"&&<div>
+        <div style={{fontSize:10,color:"#8b949e",marginBottom:8}}>Mark this date as a specialty training day. Non-training — phase end pushes out.</div>
+        <div style={{display:"flex",gap:6,marginBottom:10}}>
+          {SPEC_TYPES.map(st=><button key={st.key} onClick={()=>setSpecType(st.key)} style={{flex:1,padding:"6px",borderRadius:5,border:`1.5px solid ${specType===st.key?st.color:"#30363d"}`,background:specType===st.key?st.bg:"none",color:specType===st.key?st.color:"#8b949e",fontSize:11,fontWeight:600,cursor:"pointer"}}>{st.short}</button>)}
+        </div>
+        {existingSpec&&existingSpec.typeKey===specType
+          ?<button onClick={()=>onSpecRemove(specType)} style={{width:"100%",padding:"7px",borderRadius:5,background:"rgba(248,81,73,0.15)",border:"1px solid #f85149",color:"#f85149",fontSize:12,fontWeight:600,cursor:"pointer"}}>Remove {SPEC_TYPES.find(t=>t.key===specType)?.short} from this day</button>
+          :<button onClick={()=>onSpecAdd(specType)} style={{width:"100%",padding:"7px",borderRadius:5,background:"rgba(46,168,168,0.15)",border:"1px solid #2ea8a8",color:"#2ea8a8",fontSize:12,fontWeight:600,cursor:"pointer"}}>Assign {SPEC_TYPES.find(t=>t.key===specType)?.short} to this day</button>
+        }
+      </div>}
+      {mode==="remedial"&&<div>
+        <div style={{fontSize:10,color:"#8b949e",marginBottom:8}}>Add remedial days to this phase. Starting from this date, phase end pushes out.</div>
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:10}}>
+          <span style={{fontSize:11,color:"#8b949e"}}>Days:</span>
+          <input type="number" value={remDays} onChange={e=>setRemDays(Math.max(1,Number(e.target.value)||1))} style={{width:60,padding:"5px 8px",background:"#21262d",border:"1px solid #a371f7",borderRadius:5,color:"#e6edf3",fontSize:13,outline:"none"}}/>
+          <span style={{fontSize:10,color:"#8b949e"}}>starting this date</span>
+        </div>
+        {existingRem
+          ?<div style={{marginBottom:8,padding:"6px 10px",background:"rgba(163,113,247,0.1)",borderRadius:5,fontSize:11,color:"#a371f7"}}>Current: +{existingRem?.days||existingRem} day{(existingRem?.days||existingRem)>1?"s":""}{existingRem?.startDate?" from "+existingRem.startDate:""}</div>
+          :null}
+        <div style={{display:"flex",gap:6}}>
+          <button onClick={()=>onRemAdd(remDays)} style={{flex:1,padding:"7px",borderRadius:5,background:"rgba(163,113,247,0.15)",border:"1px solid #a371f7",color:"#a371f7",fontSize:12,fontWeight:600,cursor:"pointer"}}>{existingRem?"Update":"Add"} Remedial</button>
+          {existingRem&&<button onClick={onRemRemove} style={{padding:"7px 10px",borderRadius:5,background:"none",border:"1px solid #f85149",color:"#f85149",fontSize:12,cursor:"pointer"}}>Clear</button>}
+        </div>
+      </div>}
+      <div style={{fontSize:9,color:"#6e7681",marginTop:10,textAlign:"center"}}>Tap outside to close</div>
+    </div>
+  );
+}
+
+
+export default function App(props){
+  const {initialFtds,initialClasses,initialExFtds,isAdmin=true,userEmail="",onLogout,onSave,saving=false}=props||{};
+  const [tab,setTab]=useState("setup");
+  const [ftds,setFtds]=useState(()=>initialFtds||INIT_FTDS);
+  const [classes,setClasses]=useState(()=>initialClasses||[{id:1,name:"Class 1",startDate:"2026-04-15",recs:INIT_RECS,timeOff:{},overrides:{},reassignments:{},manualFtds:{},recSickDays:{},exRecs:new Set()}]);
+  const [activeClassId,setActiveClassId]=useState(()=>(initialClasses||[])[0]?.id||1);
+  const cls=classes.find(c=>c.id===activeClassId)||classes[0];
+  const recs=cls.recs;
+  const timeOff=cls.timeOff;
+  const recSickDays=cls.recSickDays||{};
+  const overrides=cls.overrides;
+  const [view,setView]=useState("both");
+  const [exFtds,setExFtds]=useState(()=>initialExFtds||new Set());
+  const [schedKey,setSchedKey]=useState(0);
+  // DB save helper - no-op when running standalone
+  const save=(patch)=>{if(onSave)onSave(patch);};
+  // exRecs is per-class (from cls above)
+  const [popup,setPopup]=useState(null);
+  const exRecs=cls.exRecs||new Set();
+  const [newCName,setNewCName]=useState("");
+  const [newCDate,setNewCDate]=useState("");
+  function uCls(fn){if(isAdmin===false)return;setClasses(p=>p.map(c=>c.id===activeClassId?{...c,...fn(c)}:c));setSchedKey(k=>k+1);}
+  const [nFtd,setNFtd]=useState({name:"",shift:"Day"});
+  const [nRec,setNRec]=useState("");
+  const [toFtd,setToFtd]=useState("");
+  const [raRec,setRaRec]=useState(""); const [raPhase,setRaPhase]=useState(1); const [raFtdId,setRaFtdId]=useState(""); const [raFtdName,setRaFtdName]=useState(""); const [raDate,setRaDate]=useState("");
+  const reassignments=cls.reassignments||{}; const [toDate,setToDate]=useState(""); const [toDateEnd,setToDateEnd]=useState("");
+  const [rR,setRR]=useState(""); const [rP,setRP]=useState(0); const [rD,setRD]=useState(1); const [rStart,setRStart]=useState("");
+  const [sR,setSR]=useState(""); const [sP,setSP]=useState(0); const [sT,setST]=useState("ai"); const [sStartDate,setSStartDate]=useState(""); const [sEndDate,setSEndDate]=useState("");
+
+    // Cross-class conflict detection removed - using cls.timeOff directly
+
+  const otherBusy={};
+  classes.filter(c=>c.id!==activeClassId).forEach(c=>{
+    const os=buildSched(c.recs.filter(r=>!(c.exRecs||new Set()).has(r.id)),ftds.filter(f=>!exFtds.has(f.id)),c.timeOff,c.overrides,c.reassignments||{},c.startDate,c.manualFtds||{});
+    Object.values(os).forEach(({phases})=>phases.forEach(ph=>ph.days.forEach(d=>{
+      if(d.ftdId&&d.ftdId!=="ov"&&d.kind==="train"){if(!otherBusy[d.ftdId])otherBusy[d.ftdId]=new Set();otherBusy[d.ftdId].add(d.dk);}
+    })));
+  });
+
+    // Convert otherBusy to initCommitted
+  const initCommitted={};
+  Object.entries(otherBusy).forEach(([fid,dks])=>{
+    dks.forEach(dk=>{if(!initCommitted[dk])initCommitted[dk]=new Set();initCommitted[dk].add(Number(fid));});
+  });
+  const sched=buildSched(cls.recs.filter(r=>!(cls.exRecs||new Set()).has(r.id)),ftds.filter(f=>!exFtds.has(f.id)),cls.timeOff,cls.overrides,cls.reassignments||{},cls.startDate,cls.manualFtds||{},initCommitted,recSickDays);
+  // Compute gridDays inline (no memo) to always reflect current class start date
+  // Build gridDays from actual sched data - start at first training day, end at last
+  let _gridFirst=null,_gridLast=null;
+  Object.values(sched).forEach(({phases})=>phases.forEach(ph=>ph.days.forEach(d=>{
+    const dt=d.date||new Date(d.dk);
+    if(!_gridFirst||dt<_gridFirst)_gridFirst=dt;
+    if(!_gridLast||dt>_gridLast)_gridLast=dt;
+  })));
+  const gridDays=[];
+  if(_gridFirst&&_gridLast){
+    let cur=new Date(_gridFirst);let sf=0;
+    while(cur<=_gridLast&&sf<2000){sf++;if(isWork(cur))gridDays.push(new Date(cur));cur=addDays(cur,1);}
+  }
+
+  function getEntry(rid,d){
+    const row=sched[rid];if(!row)return null;
+    for(const ph of row.phases){const f=ph.days.find(x=>x.dk===d);if(f)return{ph,d:f};}
+    return null;
+  }
+
+  const tFills=Object.values(sched).reduce((a,{phases})=>a+phases.reduce((b,ph)=>b+ph.days.filter(d=>d.isFill&&d.ftdId&&!d.isOv).length,0),0);
+  const tOv=Object.keys(overrides).length;
+  const tUnass=Object.values(sched).reduce((a,{phases})=>a+phases.reduce((b,ph)=>b+ph.days.filter(d=>d.kind==="train"&&!d.ftdId).length,0),0);
+  const tRem=recs.filter(r=>Object.values(r.remedial||{}).some(v=>(v?.days||v||0)>0)).length;
+  const tSpec=recs.filter(r=>r.specialtySlots?.length>0).length;
+  const tTO=Object.values(timeOff).reduce((a,s)=>a+s.size,0);
+
+  function addFtd(){if(!nFtd.name.trim())return;setFtds(p=>[...p,{id:Date.now(),name:nFtd.name.trim(),shift:nFtd.shift}]);save({type:"addFtd",name:nFtd.name.trim(),shift:nFtd.shift});setNFtd({name:"",shift:"Day"});}
+  function addRec(){if(!nRec.trim())return;uCls(c=>({recs:[...c.recs,{id:Date.now(),name:nRec.trim(),remedial:{},specialtySlots:[],phaseOverrides:{}}]}));save({type:"addRecruit",classId:activeClassId,name:nRec.trim()});setNRec("");}
+  function subRA(){if(!raRec||!raDate||!raFtdId)return;const fromDk=new Date(raDate+"T12:00:00").toDateString();save({type:"setReassign",classId:activeClassId,key:raRec+"_"+raPhase,ftdId:Number(raFtdId),ftdName:ftds.find(f=>f.id===Number(raFtdId))?.name||"",fromDk:raFrom});uCls(c=>({reassignments:{...c.reassignments,[raRec+"_"+raPhase]:{ftdId:Number(raFtdId),ftdName:raFtdName,fromDk}}}));setRaRec("");setRaFtdId("");setRaFtdName("");setRaDate("");}
+  function addNewClass(){if(!newCName.trim())return;const nid=Date.now();setClasses(p=>[...p,{id:nid,name:newCName.trim(),startDate:newCDate||"2026-04-15",recs:[],timeOff:{},overrides:{},reassignments:{},manualFtds:{},recSickDays:{},exRecs:new Set()}]);setActiveClassId(nid);setSchedKey(k=>k+1);save({type:"addClass",name:newCName.trim(),startDate:newCDate||"2026-04-15"});setNewCName("");setNewCDate("");}
+  function addTO(){
+    if(!toDate||!toFtd)return;
+    const fid=Number(toFtd);
+    const start=new Date(toDate+"T12:00:00");
+    const end=toDateEnd?new Date(toDateEnd+"T12:00:00"):start;
+    let cur=new Date(start);
+    const dks=[];while(new Date(cur)<=end){if(isWork(cur))dks.push(dkey(new Date(cur)));cur=addDays(cur,1);}
+    dks.forEach(dk=>save({type:"addTimeOff",classId:activeClassId,ftdId:fid,dk}));
+    cur=new Date(start);
+    uCls(c=>{const to={...c.timeOff};const s=new Set(to[fid]||[]);while(cur<=end){if(isWork(cur))s.add(dkey(cur));cur=addDays(cur,1);}to[fid]=s;return{timeOff:to};});
+    setToDate("");setToDateEnd("");
+  }
+  function rmTO(fid,d){save({type:"removeTimeOff",classId:activeClassId,ftdId:fid,dk:d});uCls(c=>{const to={...c.timeOff};const s=new Set(to[fid]||[]);s.delete(d);to[fid]=s;return{timeOff:to};});}
+  function addRem(){
+    if(!rR)return;const rid=Number(rR);const pi=Number(rP);const ex=Math.max(1,Number(rD)||1);
+    uCls(c=>({recs:c.recs.map(r=>{if(r.id!==rid)return r;const rem={...r.remedial};const cur=rem[pi];const days=(cur?.days||cur||0)+ex;rem[pi]=rStart?{days,startDate:rStart}:days;save({type:"updateRecruit",id:rid,remedial:{...rem},specialtySlots:r.specialtySlots,phaseOverrides:r.phaseOverrides});return{...r,remedial:rem};})}));
+    setRStart("");
+  }
+  function rmRem(rid,pi){uCls(c=>({recs:c.recs.map(r=>{if(r.id!==rid)return r;const rem={...r.remedial};delete rem[pi];save({type:"updateRecruit",id:rid,remedial:rem,specialtySlots:r.specialtySlots,phaseOverrides:r.phaseOverrides});return{...r,remedial:rem};})}));}
+  function addSpec(){
+    if(!sR||!sStartDate)return;const rid=Number(sR);const pi=Number(sP);
+    const rec=recs.find(r=>r.id===rid);if(!rec)return;
+    const ti=SPEC_TYPES.find(t=>t.key===sT);
+    uCls(c=>({recs:c.recs.map(r=>{if(r.id!==rid)return r;const sl=[...(r.specialtySlots||[]).filter(s=>!(s.phaseIndex===pi&&s.typeKey===sT)),{phaseIndex:pi,typeKey:sT,startDate:sStartDate,endDate:sEndDate||sStartDate,label:ti?.label}];save({type:"updateRecruit",id:rid,remedial:r.remedial,specialtySlots:sl,phaseOverrides:r.phaseOverrides});return{...r,specialtySlots:sl};})}));
+    setSStartDate("");setSEndDate("");
+  }
+  function rmSpec(rid,pi,tk){uCls(c=>({recs:c.recs.map(r=>{if(r.id!==rid)return r;const sl=(r.specialtySlots||[]).filter(s=>!(s.phaseIndex===pi&&s.typeKey===tk));save({type:"updateRecruit",id:rid,remedial:r.remedial,specialtySlots:sl,phaseOverrides:r.phaseOverrides});return{...r,specialtySlots:sl};})}));}
+  function handleCell(e,rec,date,d,phaseIndex){
+    const rect=e.currentTarget.getBoundingClientRect();
+    const top=Math.min(rect.bottom+4,window.innerHeight-240);
+    const left=Math.min(rect.left,window.innerWidth-320);
+    const isSick=(recSickDays[rec.id]||new Set()).has(d.dk);
+    const pi=phaseIndex||0;
+    const dkDate=new Date(d.dk);const dkSD=dkDate.getFullYear()+"-"+String(dkDate.getMonth()+1).padStart(2,"0")+"-"+String(dkDate.getDate()).padStart(2,"0");const existingSpec=rec.specialtySlots?.find(s=>s.phaseIndex===pi&&s.startDate===dkSD);
+    const existingRem=rec.remedial?.[pi];
+    // Get same-shift FTDs split by availability for this day
+    const recIdx=recs.findIndex(rx=>rx.id===rec.id);
+    const shift=recIdx>=0?ROTATIONS[recIdx%3][pi]:"Day";
+    const allShiftFtds=ftds.filter(f=>f.shift===shift&&!exFtds.has(f.id));
+    // Check who is busy on this day (committed to another recruit or on timeOff)
+    const dayDk=d.dk;
+    const busyIds=new Set();
+    Object.values(sched).forEach(({rec:sr,phases})=>phases.forEach(ph=>ph.days.forEach(dd=>{
+      if(dd.dk===dayDk&&dd.ftdId&&dd.ftdId!=="ov"&&sr.id!==rec.id)busyIds.add(dd.ftdId);
+    })));
+    allShiftFtds.forEach(f=>{if(timeOff[f.id]?.has(dayDk))busyIds.add(f.id);});
+    const availFtds=allShiftFtds.filter(f=>!busyIds.has(f.id));
+    const shiftFtds=availFtds;
+    setPopup({rec,date,dkStr:d.dk,pName:d.pName||d.ftdName,cur:d.isOv?d.ftdName:"",isSick,pi,existingSpec,existingRem,isSpec:d.kind==="spec",specKey:d.sk,shiftFtds,top,left});
+  }
+  function addSpecFromGrid(rec,dk,pi,typeKey){
+    const d2=new Date(dk);const sd=dk.split("-").length===3?dk:d2.getFullYear()+"-"+String(d2.getMonth()+1).padStart(2,"0")+"-"+String(d2.getDate()).padStart(2,"0");
+    const existing=rec.specialtySlots||[];
+    // Only remove if exact same date+type already exists (prevent duplicate on same day)
+    const filtered=existing.filter(s=>!(s.phaseIndex===pi&&s.typeKey===typeKey&&s.startDate===sd));
+    const ti=SPEC_TYPES.find(t=>t.key===typeKey);
+    const newSlots=[...filtered,{phaseIndex:pi,typeKey,startDate:sd,endDate:sd,label:ti?.label}];uCls(c=>({recs:c.recs.map(r=>{if(r.id!==rec.id)return r;save({type:"updateRecruit",id:rec.id,remedial:r.remedial,specialtySlots:newSlots,phaseOverrides:r.phaseOverrides||{}});return{...r,specialtySlots:newSlots};})}));
+    setPopup(null);
+  }
+  function removeSpecFromGrid(rec,dk,pi,typeKey){
+    const d2=new Date(dk);const sd=dk.split("-").length===3?dk:d2.getFullYear()+"-"+String(d2.getMonth()+1).padStart(2,"0")+"-"+String(d2.getDate()).padStart(2,"0");
+    uCls(c=>({recs:c.recs.map(r=>{if(r.id!==rec.id)return r;const sl=(r.specialtySlots||[]).filter(s=>!(s.phaseIndex===pi&&s.typeKey===typeKey&&s.startDate===sd));save({type:"updateRecruit",id:rec.id,remedial:r.remedial,specialtySlots:sl,phaseOverrides:r.phaseOverrides||{}});return{...r,specialtySlots:sl};})}));
+    setPopup(null);
+  }
+  function addRemFromGrid(rec,pi,days,startDk){
+    // Convert dk ("Wed Apr 15 2026") to YYYY-MM-DD for engine
+    let sd=null;if(startDk){if(startDk.split("-").length===3){sd=startDk;}else{const d=new Date(startDk);sd=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}}
+    uCls(c=>({recs:c.recs.map(r=>{if(r.id!==rec.id)return r;const rem={...r.remedial};rem[pi]=sd?{days,startDate:sd}:days;save({type:"updateRecruit",id:rec.id,remedial:rem,specialtySlots:r.specialtySlots||[],phaseOverrides:r.phaseOverrides||{}});return{...r,remedial:rem};})}));
+    setPopup(null);
+  }
+  function removeRemFromGrid(rec,pi){
+    uCls(c=>({recs:c.recs.map(r=>{if(r.id!==rec.id)return r;const rem={...r.remedial};delete rem[pi];save({type:"updateRecruit",id:rec.id,remedial:rem,specialtySlots:r.specialtySlots||[],phaseOverrides:r.phaseOverrides||{}});return{...r,remedial:rem};})}));
+    setPopup(null);
+  }
+  function toggleSick(rec,dk){
+    uCls(c=>{
+      const sd={...c.recSickDays};
+      const s=new Set(sd[rec.id]||[]);
+      const wasSick=s.has(dk);
+      wasSick?s.delete(dk):s.add(dk);
+      sd[rec.id]=s;
+      save({type:"toggleSickDay",classId:activeClassId,recruitId:rec.id,dk,sick:!wasSick});
+      return{recSickDays:sd};
+    });
+    setPopup(null);
+  }
+  function saveOv(name){if(!popup)return;const k=`${popup.rec.id}_${popup.dkStr}`;save({type:"setOverride",classId:activeClassId,key:k,value:name});uCls(c=>({overrides:{...c.overrides,[`${popup.rec.id}_${popup.dkStr}`]:name}}));setPopup(null);}
+  function clrOv(){if(!popup)return;const k=`${popup.rec.id}_${popup.dkStr}`;save({type:"clearOverride",classId:activeClassId,key:k});uCls(c=>{const o={...c.overrides};delete o[k];return{overrides:o};});setPopup(null);}
+
+  const ovLog=Object.entries(overrides).map(([key,name])=>{
+    const idx=key.indexOf("_");const rid=Number(key.slice(0,idx));const dkStr=key.slice(idx+1);
+    const rec=recs.find(r=>r.id===rid);
+    return{key,rName:rec?.name||"Unknown",name,date:new Date(dkStr)};
+  }).sort((a,b)=>a.date-b.date);
+
+  const bg0="#0d1117";const bg1="#161b22";const bg2="#21262d";const bdr="#30363d";
+  const blue="#388bfd";const green="#3fb950";const amber="#d29922";const red="#f85149";
+  const purple="#a371f7";const teal="#2ea8a8";const orange="#e8724a";const muted="#8b949e";
+
+  const card={background:bg1,border:`1px solid ${bdr}`,borderRadius:8,padding:18,marginBottom:14};
+  const inp={padding:"7px 10px",background:bg2,border:`1px solid ${bdr}`,borderRadius:6,fontSize:13,color:"#e6edf3",outline:"none",width:"100%",fontFamily:"sans-serif"};
+  const sel={...inp,cursor:"pointer"};
+  const lbl={fontSize:10,fontWeight:600,letterSpacing:.5,color:muted,textTransform:"uppercase",marginBottom:3,display:"block"};
+  const ctitle={fontFamily:"monospace",fontSize:10,fontWeight:600,letterSpacing:1,color:muted,textTransform:"uppercase",marginBottom:12,paddingBottom:8,borderBottom:`1px solid ${bdr}`,display:"flex",alignItems:"center",justifyContent:"space-between"};
+  function btn(bg,col,bd){return{padding:"7px 14px",borderRadius:6,border:bd||"none",background:bg,color:col,fontSize:12,fontWeight:500,cursor:"pointer",whiteSpace:"nowrap",fontFamily:"sans-serif"};}
+  function sbadge(bg,col){return{display:"inline-flex",alignItems:"center",padding:"2px 7px",borderRadius:4,fontSize:10,fontWeight:600,background:bg,color:col};}
+  function cell(bg,col,bd){return{borderRadius:3,padding:"2px 4px",fontSize:9,fontWeight:600,fontFamily:"monospace",whiteSpace:"nowrap",display:"inline-block",background:bg,color:col,border:bd||"none"};}
+  function al(c){
+    const map={i:[blue,"rgba(56,139,253,0.13)","rgba(56,139,253,.2)"],w:[amber,"rgba(210,153,34,0.13)","rgba(210,153,34,.3)"],r:[purple,"rgba(163,113,247,0.13)","rgba(163,113,247,.2)"],t:[teal,"rgba(46,168,168,0.13)","rgba(46,168,168,.2)"],o:[orange,"rgba(232,114,74,0.13)","rgba(232,114,74,.3)"]};
+    const[col,bg,bd]=map[c]||map.i;
+    return{padding:"9px 13px",borderRadius:6,fontSize:12,marginBottom:11,display:"flex",gap:7,alignItems:"flex-start",lineHeight:1.5,background:bg,border:`1px solid ${bd}`,color:col};
+  }
+  const ntab=(on)=>({padding:"6px 13px",borderRadius:6,border:"none",background:on?`rgba(56,139,253,0.13)`:"none",color:on?blue:muted,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"sans-serif"});
+  const vtab=(on)=>({padding:"6px 14px",borderRadius:6,border:`1.5px solid ${on?blue:bdr}`,background:on?"rgba(56,139,253,0.13)":"none",color:on?blue:muted,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"sans-serif"});
+
+
+
+  return (
+    <div style={{minHeight:"100vh",background:bg0,color:"#e6edf3",fontFamily:"sans-serif"}}>
+
+      {/* NAV */}
+      <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 22px",background:bg1,borderBottom:`1px solid ${bdr}`,position:"sticky",top:0,zIndex:200,flexWrap:"wrap"}}>
+        <div style={{fontFamily:"monospace",fontSize:13,fontWeight:700,color:"#c9a84c"}}>HCSO FTD<span style={{color:muted,fontWeight:400}}>/</span>SCHED</div>
+        <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap"}}>
+          {classes.map(cl=><button key={cl.id} onClick={()=>{setActiveClassId(cl.id);setSchedKey(k=>k+1);}} style={{padding:"3px 9px",borderRadius:5,border:`1.5px solid ${cl.id===activeClassId?"#c9a84c":"#30363d"}`,background:cl.id===activeClassId?"rgba(201,168,76,0.15)":"none",color:cl.id===activeClassId?"#c9a84c":"#8b949e",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"sans-serif"}}>{cl.name}</button>)}
+          <input value={newCName} onChange={e=>setNewCName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addNewClass()} placeholder="New class…" style={{padding:"3px 7px",background:"#21262d",border:"1px solid #30363d",borderRadius:4,fontSize:10,color:"#e6edf3",outline:"none",width:85,fontFamily:"sans-serif"}}/>
+          <button onClick={addNewClass} style={{padding:"3px 7px",borderRadius:4,border:"1px solid #3fb950",background:"none",color:"#3fb950",fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"sans-serif"}}>+</button>
+        </div>
+        <div style={{fontSize:11,color:muted,fontFamily:"monospace"}}>{cls.name} · {cls.startDate||"2026-04-15"} · 12-hr</div>
+        <div style={{display:"flex",gap:2,marginLeft:"auto",alignItems:"center",flexWrap:"wrap"}}>
+          {[["setup","⚙ Setup",null,null],["timeoff","📅 Time Off",tTO||null,amber],["remedial","⚠ Remedial",tRem||null,purple],["specialty","🎓 Specialty",tSpec||null,teal],["manual","✋ Manual",null,null],["reassign","🔄 Reassign",null,null],["schedule","📋 Schedule",null,null]].map(([key,lbl,badge,bc])=>(
+            <button key={key} style={ntab(tab===key)} onClick={()=>setTab(key)}>
+              {lbl}{badge!=null&&<span style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:8,marginLeft:3,background:bc,color:bc===amber?"#000":"#fff"}}>{badge}</span>}
+            </button>
+          ))}
+          <button style={{...btn(green,"#fff"),marginLeft:6}} onClick={()=>setTab("schedule")}>Generate →</button>
+        </div>
+      </div>
+
+      {/* SETUP */}
+      {tab==="setup"&&<div style={{padding:22,maxWidth:1400,margin:"0 auto"}}>
+        <div style={{fontFamily:"monospace",fontSize:18,fontWeight:600,marginBottom:3}}>Program Setup</div>
+        <div style={{fontSize:12,color:muted,marginBottom:20,lineHeight:1.6}}>Short week: <b>Wed, Thu</b> · Long week: <b>Mon, Tue, Fri, Sat, Sun</b> · Ph 1–3 = 14 training days · Ph 4 = 7 days<br/>Specialty days do <b>not</b> count toward training totals. Click any Schedule grid cell for sick call fill-ins.</div>
+        <div style={{...card,marginBottom:14}}>
+          <div style={ctitle}>Class Management</div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+              <label style={lbl}>Class Name</label>
+              <input style={{...inp,width:130}} value={cls.name} onChange={e=>{setClasses(p=>p.map(c=>c.id===activeClassId?{...c,name:e.target.value}:c));save({type:"updateClass",id:activeClassId,name:e.target.value,startDate:cls.startDate});}} placeholder="Class name"/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+              <label style={lbl}>Start Date</label>
+              <input type="date" style={{...inp,width:150}} value={cls.startDate||"2026-04-15"} onChange={e=>{setClasses(p=>p.map(c=>c.id===activeClassId?{...c,startDate:e.target.value}:c));setSchedKey(k=>k+1);save({type:"updateClass",id:activeClassId,name:cls.name,startDate:e.target.value});}}/>
+            </div>
+            {classes.length>1&&<button style={{...btn("none",red,"1px solid "+red),marginTop:18}} onClick={()=>{const remaining=classes.filter(c=>c.id!==activeClassId);setClasses(remaining);setActiveClassId(remaining[0].id);save({type:"deleteClass",id:activeClassId});}}>Delete Class</button>}
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+              <label style={lbl}>New Class Name</label>
+              <input style={{...inp,width:130}} value={newCName} onChange={e=>setNewCName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addNewClass()} placeholder="e.g. Class 2"/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+              <label style={lbl}>Start Date</label>
+              <input type="date" style={{...inp,width:150}} value={newCDate||""} onChange={e=>setNewCDate(e.target.value)}/>
+            </div>
+            <button style={{...btn(green,"#fff"),marginTop:18}} onClick={addNewClass}>+ Add Class</button>
+          </div>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+          <div style={card}>
+            <div style={ctitle}>Field Training Deputies ({ftds.length})</div>
+            <div style={{display:"flex",gap:8,alignItems:"flex-end",marginBottom:10,flexWrap:"wrap"}}>
+              <div style={{display:"flex",flexDirection:"column",gap:3,flex:1,minWidth:90}}>
+                <label style={lbl}>Name</label>
+                <input style={inp} placeholder="Deputy name" value={nFtd.name} onChange={e=>setNFtd(p=>({...p,name:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addFtd()}/>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:3,maxWidth:100}}>
+                <label style={lbl}>Shift</label>
+                <select style={sel} value={nFtd.shift} onChange={e=>setNFtd(p=>({...p,shift:e.target.value}))}>
+                  {SHIFTS.map(sh=><option key={sh}>{sh}</option>)}
+                </select>
+              </div>
+              <button style={{...btn(blue,"#fff"),marginTop:18}} onClick={addFtd}>Add</button>
+            </div>
+            {SHIFTS.map(sh=>{
+              const grp=ftds.filter(f=>f.shift===sh);if(!grp.length)return null;
+              const [sbg,scol]=shiftColor(sh);
+              return <div key={sh} style={{marginBottom:10}}>
+                <div style={{fontSize:10,fontWeight:600,color:scol,marginBottom:5,letterSpacing:1,textTransform:"uppercase"}}>{sh}shift — {grp.length} FTDs</div>
+                {grp.map(f=><div key={f.id} style={{display:"flex",alignItems:"center",gap:9,padding:"7px 11px",background:exFtds.has(f.id)?"#1a1a1a":bg2,border:`1px solid ${exFtds.has(f.id)?"#444":bdr}`,borderRadius:6,marginBottom:5,opacity:exFtds.has(f.id)?0.45:1}}>
+                  <div style={{width:26,height:26,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,background:sbg,color:scol,flexShrink:0}}>{f.name.split(" ").map(w=>w[0]).join("").slice(0,2)}</div>
+                  <span style={{fontSize:13,fontWeight:500,flex:1}}>{f.name}</span>
+                  <span style={sbadge(sbg,scol)}>{sh}</span>
+                  <button style={btn("none",red,"1px solid "+red)} onClick={()=>{setFtds(p=>p.filter(x=>x.id!==f.id));save({type:"deleteFtd",id:f.id});}}>✕</button>
+                  <button onClick={()=>{setExFtds(p=>{const n=new Set(p);const wasIn=n.has(f.id);wasIn?n.delete(f.id):n.add(f.id);save({type:"toggleExclusion",exType:"ftd",refId:f.id,classId:0,excluded:!wasIn});return n;});}} style={{padding:"2px 8px",borderRadius:4,border:"1px solid #555",background:exFtds.has(f.id)?"rgba(210,153,34,0.2)":"none",color:exFtds.has(f.id)?"#d29922":"#666",fontSize:12,cursor:"pointer",marginLeft:2}}>👁</button>
+                </div>)}
+              </div>;
+            })}
+          </div>
+          <div>
+            <div style={card}>
+              <div style={ctitle}>Recruits ({recs.length})</div>
+              <div style={{display:"flex",gap:8,alignItems:"flex-end",marginBottom:10}}>
+                <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
+                  <label style={lbl}>Name</label>
+                  <input style={inp} placeholder="Recruit name" value={nRec} onChange={e=>setNRec(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addRec()}/>
+                </div>
+                <button style={{...btn(blue,"#fff"),marginTop:18}} onClick={addRec}>Add</button>
+              </div>
+              <div style={{maxHeight:280,overflowY:"auto"}}>
+                {recs.map((r,i)=>{
+                  const ss=ROTATIONS[i%3][0];const [sbg,scol]=shiftColor(ss);
+                  return <div key={r.id} style={{display:"flex",flexDirection:"column",padding:"7px 11px",background:exRecs.has(r.id)?"#1a1a1a":bg2,border:`1px solid ${exRecs.has(r.id)?"#444":bdr}`,borderRadius:6,marginBottom:5,opacity:exRecs.has(r.id)?0.45:1}}><div style={{display:"flex",alignItems:"center",gap:9}}>
+                    <div style={{width:26,height:26,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,background:"rgba(56,139,253,0.13)",color:blue,flexShrink:0}}>{String(i+1).padStart(2,"0")}</div>
+                    <span style={{fontSize:13,fontWeight:500,flex:1}}>{r.name}</span>
+                    {r.specialtySlots?.length>0&&<span style={{fontSize:9,fontWeight:700,background:"rgba(46,168,168,0.13)",color:teal,padding:"1px 5px",borderRadius:3}}>SPEC</span>}
+                    {Object.values(r.remedial||{}).some(v=>(v?.days||v||0)>0)&&<span style={{fontSize:9,fontWeight:700,background:"rgba(163,113,247,0.13)",color:purple,padding:"1px 5px",borderRadius:3}}>REM</span>}
+                    <span style={sbadge(sbg,scol)}>↳{ss[0]}</span>
+                    <button style={btn("none",red,"1px solid "+red)} onClick={()=>{uCls(c=>({recs:c.recs.filter(x=>x.id!==r.id)}));save({type:"deleteRecruit",id:r.id});}}>✕</button>
+                    <button onClick={()=>{uCls(c=>{const s=new Set(c.exRecs||[]);const wasIn=s.has(r.id);wasIn?s.delete(r.id):s.add(r.id);save({type:"toggleExclusion",exType:"recruit",refId:r.id,classId:activeClassId,excluded:!wasIn});return{exRecs:s};});}} style={{padding:"2px 8px",borderRadius:4,border:"1px solid #555",background:exRecs.has(r.id)?"rgba(210,153,34,0.2)":"none",color:exRecs.has(r.id)?"#d29922":"#666",fontSize:12,cursor:"pointer",marginLeft:2}}>👁</button>
+                  </div><div style={{display:"flex",gap:4,marginTop:6,paddingTop:6,borderTop:`1px solid ${bdr}`}}>
+                    <span style={{fontSize:9,color:muted,alignSelf:"center",minWidth:30}}>Days:</span>
+                    {PHASE_BASE.map((base,pi)=>{
+                      const ov=r.phaseOverrides?.[pi];
+                      const phCols=["#3fb950","#388bfd","#d29922","#a371f7"];
+                      return <div key={pi} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,flex:1}}>
+                        <span style={{fontSize:8,color:phCols[pi],fontWeight:700}}>P{pi+1}</span>
+                        <input type="number" value={ov??""} placeholder={String(base)}
+                          onChange={e=>{const v=e.target.value;uCls(c=>({recs:c.recs.map(r2=>{if(r2.id!==r.id)return r2;const po={...r2.phaseOverrides};if(v===""||v===null)delete po[pi];else po[pi]=Math.max(1,Number(v));const updated={...r2,phaseOverrides:po};save({type:"updateRecruit",id:r.id,remedial:updated.remedial,specialtySlots:updated.specialtySlots,phaseOverrides:po});return updated;})}));}}
+                          style={{width:"100%",padding:"2px 4px",background:ov!==undefined?"rgba(56,139,253,0.13)":bg2,border:`1px solid ${ov!==undefined?phCols[pi]:bdr}`,borderRadius:4,color:ov!==undefined?phCols[pi]:"#e6edf3",fontSize:11,outline:"none",textAlign:"center"}}/>
+                      </div>;
+                    })}
+                  </div>
+                  </div>;
+                })}
+              </div>
+            </div>
+            <div style={card}>
+              <div style={ctitle}>Shift Distribution</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+                {SHIFTS.map(sh=>{
+                  const cnt=recs.filter((_,i)=>ROTATIONS[i%3][0]===sh).length;
+                  const [,scol]=shiftColor(sh);
+                  return <div key={sh} style={{textAlign:"center",padding:14,background:bg2,borderRadius:6}}>
+                    <div style={{fontSize:26,fontWeight:700,color:scol,fontFamily:"monospace"}}>{cnt}</div>
+                    <div style={{fontSize:11,color:muted,marginTop:3}}>{sh}</div>
+                  </div>;
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>}
+
+      {/* TIME OFF */}
+      {tab==="timeoff"&&<div style={{padding:22,maxWidth:1400,margin:"0 auto"}}>
+        <div style={{fontFamily:"monospace",fontSize:18,fontWeight:600,marginBottom:3}}>Time Off Management</div>
+        <div style={{fontSize:12,color:muted,marginBottom:20}}>Log planned FTD days off. Same-shift fill-ins assigned automatically.</div>
+        <div style={{...card,maxWidth:500}}>
+          <div style={ctitle}>Add Time Off</div>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
+              <label style={lbl}>Deputy</label>
+              <select style={sel} value={toFtd} onChange={e=>setToFtd(e.target.value)}>
+                <option value="">— Select FTD —</option>
+                {ftds.map(f=><option key={f.id} value={f.id}>{f.name} ({f.shift})</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
+              <label style={lbl}>From</label>
+              <input type="date" style={inp} value={toDate} onChange={e=>setToDate(e.target.value)}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
+              <label style={lbl}>To (optional)</label>
+              <input type="date" style={inp} value={toDateEnd} onChange={e=>setToDateEnd(e.target.value)} min={toDate}/>
+            </div>
+            <button style={{...btn(amber,"#000"),marginTop:18,fontWeight:600}} onClick={addTO}>Add</button>
+          </div>
+        </div>
+        {ftds.filter(f=>timeOff[f.id]?.size>0).length===0
+          ?<div style={al("i")}><span>ℹ</span><span>No time off logged.</span></div>
+          :<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            {ftds.filter(f=>timeOff[f.id]?.size>0).map(f=>{
+              const [sbg,scol]=shiftColor(f.shift);
+              return <div key={f.id} style={card}>
+                <div style={ctitle}><span>{f.name}</span><span style={sbadge(sbg,scol)}>{f.shift}</span></div>
+                {[...timeOff[f.id]].sort((a,b)=>new Date(a)-new Date(b)).map(d=>(
+                  <div key={d} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${bdr}`}}>
+                    <span style={{fontFamily:"monospace",fontSize:12}}>{fmtS(new Date(d))}</span>
+                    <button style={btn("none",red,"1px solid "+red)} onClick={()=>rmTO(f.id,d)}>Remove</button>
+                  </div>
+                ))}
+              </div>;
+            })}
+          </div>}
+      </div>}
+
+      {/* REMEDIAL */}
+      {tab==="remedial"&&<div style={{padding:22,maxWidth:1400,margin:"0 auto"}}>
+        <div style={{fontFamily:"monospace",fontSize:18,fontWeight:600,marginBottom:3}}>Remedial Days</div>
+        <div style={{fontSize:12,color:muted,marginBottom:20}}>Extra training days added to a phase. These <b>do count</b> toward the training total and push the phase end date out.</div>
+        <div style={{...card,maxWidth:540}}>
+          <div style={ctitle}>Add Remedial Days</div>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
+              <label style={lbl}>Recruit</label>
+              <select style={sel} value={rR} onChange={e=>setRR(e.target.value)}>
+                <option value="">— Select —</option>
+                {recs.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,maxWidth:110}}>
+              <label style={lbl}>Phase</label>
+              <select style={sel} value={rP} onChange={e=>setRP(Number(e.target.value))}>
+                {[0,1,2,3].map(i=><option key={i} value={i}>Phase {i+1}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,maxWidth:60}}>
+              <label style={lbl}>Days</label>
+              <input type="number" style={inp} value={rD} onChange={e=>setRD(e.target.value)} onBlur={e=>setRD(Math.max(1,Number(e.target.value)||1))}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,maxWidth:160}}>
+              <label style={lbl}>Start Date (optional)</label>
+              <input type="date" style={inp} value={rStart} onChange={e=>setRStart(e.target.value)}/>
+            </div>
+            <button style={{...btn("rgba(163,113,247,0.13)",purple,"1px solid "+purple),marginTop:18,fontWeight:600}} onClick={addRem}>Add</button>
+          </div>
+        </div>
+        {recs.filter(r=>Object.values(r.remedial||{}).some(v=>(v?.days||v||0)>0)).length===0
+          ?<div style={al("i")}><span>ℹ</span><span>No remedial days assigned.</span></div>
+          :<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            {recs.filter(r=>Object.values(r.remedial||{}).some(v=>(v?.days||v||0)>0)).map(r=>(
+              <div key={r.id} style={{...card,border:`1px solid ${purple}`,background:bg2}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+                  <span style={{fontSize:11,fontWeight:600,color:purple,textTransform:"uppercase"}}>{r.name}</span>
+                  <span style={{fontSize:11,color:muted}}>+{Object.values(r.remedial).reduce((a,v)=>a+v,0)} day(s)</span>
+                </div>
+                {Object.entries(r.remedial).filter(([,v])=>(v?.days||v||0)>0).map(([pi,days])=>(
+                  <div key={pi} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${bdr}`,fontSize:12}}>
+                    <span style={{fontSize:9,fontWeight:700,color:phColor(Number(pi)+1),fontFamily:"monospace",width:54}}>Phase {Number(pi)+1}</span>
+                    <span style={{flex:1}}>+{r.remedial[pi]?.days||r.remedial[pi]||0} day{(r.remedial[pi]?.days||r.remedial[pi]||0)>1?"s":""}{r.remedial[pi]?.startDate?" (mid-phase)":""}</span>
+                    <span style={{fontSize:11,color:muted}}>{PHASE_BASE[Number(pi)]}→{PHASE_BASE[Number(pi)]+(r.remedial[pi]?.days||r.remedial[pi]||0)}{r.remedial[pi]?.startDate?" · starts "+new Date(r.remedial[pi].startDate+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}</span>
+                    <button style={btn("none",red,"1px solid "+red)} onClick={()=>rmRem(r.id,Number(pi))}>Clear</button>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>}
+      </div>}
+
+      {/* SPECIALTY */}
+      {tab==="specialty"&&<div style={{padding:22,maxWidth:1400,margin:"0 auto"}}>
+        <div style={{fontFamily:"monospace",fontSize:18,fontWeight:600,marginBottom:3}}>Specialty Training Days</div>
+        <div style={{fontSize:12,color:muted,marginBottom:20}}>AI (2 days) and DUI (2 days) do <b>not</b> count toward the training total — phase end date pushes out.</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}}>
+          {SPEC_TYPES.map(st=>(
+            <div key={st.key} style={{...card,border:`1px solid ${st.color}`,display:"flex",alignItems:"center",gap:12}}>
+              <span style={{padding:"3px 10px",borderRadius:10,fontSize:12,fontWeight:700,background:st.bg,color:st.color,border:`1px solid ${st.color}`}}>{st.short}</span>
+              <div>
+                <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{st.label}</div>
+                <div style={{fontSize:11,color:muted}}>{st.days} working days · Non-training · Pushes phase end out</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{...card,maxWidth:600}}>
+          <div style={ctitle}>Assign Specialty Days</div>
+          <div style={al("t")}><span>ℹ</span><span>Enter a date range for when specialty training occurs. Working days in that range are marked as specialty (non-training) and push the phase end out.</span></div>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
+              <label style={lbl}>Recruit</label>
+              <select style={sel} value={sR} onChange={e=>setSR(e.target.value)}>
+                <option value="">— Select —</option>
+                {recs.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,maxWidth:100}}>
+              <label style={lbl}>Phase</label>
+              <select style={sel} value={sP} onChange={e=>setSP(Number(e.target.value))}>
+                {[0,1,2,3].map(i=><option key={i} value={i}>Phase {i+1}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,maxWidth:130}}>
+              <label style={lbl}>Type</label>
+              <select style={sel} value={sT} onChange={e=>setST(e.target.value)}>
+                {SPEC_TYPES.map(st=><option key={st.key} value={st.key}>{st.short} — {st.label}</option>)}
+              </select>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
+              <label style={lbl}>From Date</label>
+              <input type="date" style={inp} value={sStartDate} onChange={e=>setSStartDate(e.target.value)}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1}}>
+              <label style={lbl}>To Date (optional)</label>
+              <input type="date" style={inp} value={sEndDate} onChange={e=>setSEndDate(e.target.value)} min={sStartDate}/>
+            </div>
+            <button style={{...btn("rgba(46,168,168,0.13)",teal,"1px solid "+teal),marginTop:18,fontWeight:600}} onClick={addSpec}>Assign</button>
+          </div>
+        </div>
+        {recs.filter(r=>r.specialtySlots?.length>0).length===0
+          ?<div style={al("i")}><span>ℹ</span><span>No specialty days assigned yet.</span></div>
+          :<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+            {recs.filter(r=>r.specialtySlots?.length>0).map(r=>(
+              <div key={r.id} style={{...card,border:`1px solid ${teal}`,background:bg2}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
+                  <span style={{fontSize:11,fontWeight:600,color:teal,textTransform:"uppercase"}}>{r.name}</span>
+                  <span style={{fontSize:11,color:muted}}>{r.specialtySlots.length} slot(s)</span>
+                </div>
+                {r.specialtySlots.map((slot,si)=>{
+                  const ti=SPEC_TYPES.find(t=>t.key===slot.typeKey);
+                  return <div key={si} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${bdr}`,fontSize:12}}>
+                    <span style={{padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:700,background:ti?.bg,color:ti?.color,border:`1px solid ${ti?.color}`}}>{ti?.short}</span>
+                    <span style={{flex:1}}>{ti?.label}</span>
+                    <span style={{fontSize:11,color:muted,fontFamily:"monospace"}}>Ph {slot.phaseIndex+1}{slot.startDate?" · "+slot.startDate+(slot.endDate&&slot.endDate!==slot.startDate?" → "+slot.endDate:""):""}</span>
+                    <button style={btn("none",red,"1px solid "+red)} onClick={()=>rmSpec(r.id,slot.phaseIndex,slot.typeKey)}>Remove</button>
+                  </div>;
+                })}
+              </div>
+            ))}
+          </div>}
+      </div>}
+
+      {/* SICK CALLS LOG */}
+      {tab==="manual"&&<div style={{padding:22,maxWidth:900,margin:"0 auto"}}>
+        <div style={{fontFamily:"monospace",fontSize:18,fontWeight:600,marginBottom:3}}>Manual FTD Assignments</div>
+        <div style={{fontSize:12,color:muted,marginBottom:20,lineHeight:1.6}}>Assign a specific FTD to each recruit for each phase. FTDs busy in other classes during the same dates are marked. Leave blank to auto-assign.</div>
+        {recs.length===0
+          ?<div style={{padding:"9px 13px",borderRadius:6,fontSize:12,background:"rgba(56,139,253,0.13)",border:"1px solid rgba(56,139,253,.2)",color:blue,display:"flex",gap:7}}><span>ℹ</span><span>Add recruits in Setup first.</span></div>
+          :<div>
+          {recs.map((r,ri)=>{
+              const rot=ROTATIONS[ri%3];
+              const recSched=sched[r.id];
+              return <div key={r.id} style={{background:bg1,border:`1px solid ${bdr}`,borderRadius:8,padding:14,marginBottom:12}}>
+                <div style={{fontWeight:600,fontSize:13,marginBottom:10,color:"#e6edf3"}}>{r.name}</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+                  {PHASE_BASE.map((base,pi)=>{
+                    const shift=rot[pi];
+                    const phDays=recSched?recSched.phases[pi]?.days.map(d=>d.dk):[];
+                    const phDkSet=new Set(phDays);
+                    const mkey=r.id+"_"+pi;
+                    const cur=(cls.manualFtds||{})[mkey]||"";
+                    const [pbg,pcol]=[["rgba(63,185,80,.15)","#3fb950"],["rgba(56,139,253,.15)","#388bfd"],["rgba(210,153,34,.15)","#d29922"],["rgba(163,113,247,.15)","#a371f7"]][pi];
+                    const phStart=recSched?.phases[pi]?.days[0]?.date;
+                    const phEnd=recSched?.phases[pi]?.days[recSched.phases[pi].days.length-1]?.date;
+                    const phLabel=phStart?fmtMD(phStart)+"→"+fmtMD(phEnd):"TBD";
+                    return <div key={pi} style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <div style={{fontSize:9,fontWeight:700,color:pcol,textTransform:"uppercase",letterSpacing:.5}}>Phase {pi+1}</div>
+                      <div style={{fontSize:8,color:muted,marginBottom:2}}>{phLabel}</div>
+                      <select style={{...sel,fontSize:11,padding:"5px 7px",border:`1px solid ${pcol}`,background:cur?pbg:bg2}}
+                        value={cur}
+                        onChange={e=>uCls(c=>({manualFtds:{...(c.manualFtds||{}),[mkey]:e.target.value}}));save({type:"setManualFtd",classId:activeClassId,key:mkey,ftdId:e.target.value})}>
+                        <option value="">Auto-assign</option>
+                        {ftds.filter(f=>!exFtds.has(f.id)).map(f=>{
+                          const busyCount=phDkSet.size>0&&otherBusy[f.id]?[...phDkSet].filter(dk=>otherBusy[f.id].has(dk)).length:0;
+                          const busy=busyCount>0&&busyCount>=Math.ceil(phDkSet.size*0.5);// busy if >50% of days committed
+                          return <option key={f.id} value={f.id}>{f.name} ({f.shift}){busy?" ⚠ busy":""}</option>;
+                        })}
+                      </select>
+                    </div>;
+                  })}
+                </div>
+              </div>;
+            })
+          }
+          <button style={{...btn(green,"#fff"),marginTop:8}} onClick={()=>setTab("schedule")}>Generate Schedule →</button>
+        </div>}
+      </div>}
+
+            {tab==="reassign"&&<div style={{padding:22,maxWidth:900,margin:"0 auto"}}>
+        <div style={{fontFamily:"monospace",fontSize:18,fontWeight:600,marginBottom:3}}>Mid-Phase Reassignments</div>
+        <div style={{fontSize:12,color:muted,marginBottom:16}}>Swap a recruit's FTD from a date through end of that phase. Same shift only.</div>
+        <div style={{background:bg1,border:`1px solid ${bdr}`,borderRadius:8,padding:18,marginBottom:14,maxWidth:560}}>
+          <div style={{fontFamily:"monospace",fontSize:10,fontWeight:600,letterSpacing:1,color:muted,textTransform:"uppercase",marginBottom:12,paddingBottom:8,borderBottom:`1px solid ${bdr}`}}>Add Reassignment</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={lbl}>Recruit</label>
+              <select style={sel} value={raRec} onChange={e=>setRaRec(e.target.value)}><option value="">— Select —</option>{recs.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></div>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={lbl}>Phase</label>
+              <select style={sel} value={raPhase} onChange={e=>setRaPhase(Number(e.target.value))}>{[1,2,3,4].map(n=><option key={n} value={n}>Phase {n}</option>)}</select></div>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={lbl}>New FTD (same shift)</label>
+              <select style={sel} value={raFtdId} onChange={e=>{setRaFtdId(e.target.value);setRaFtdName(ftds.find(f=>String(f.id)===e.target.value)?.name||"");}}><option value="">— Select FTD —</option>{ftds.filter(f=>{const ri=recs.findIndex(r=>r.id===Number(raRec));if(ri<0)return true;return f.shift===ROTATIONS[ri%3][Number(raPhase)-1];}).map(f=><option key={f.id} value={f.id}>{f.name}</option>)}</select></div>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}><label style={lbl}>Effective From</label>
+              <input type="date" style={inp} value={raDate} onChange={e=>setRaDate(e.target.value)}/></div>
+          </div>
+          <button style={{...btn("#22c55e","#000"),fontWeight:600}} onClick={subRA}>Apply Reassignment</button>
+        </div>
+        {Object.keys(reassignments).length===0
+          ?<div style={{padding:"9px 13px",borderRadius:6,fontSize:12,marginBottom:11,display:"flex",gap:7,background:"rgba(56,139,253,0.13)",border:"1px solid rgba(56,139,253,.2)",color:blue}}><span>ℹ</span><span>No reassignments recorded.</span></div>
+          :Object.entries(reassignments).map(([k,v])=>{const[rid,ph]=k.split("_");const rec=recs.find(r=>r.id===Number(rid));return <div key={k} style={{display:"flex",alignItems:"center",gap:9,padding:"9px 13px",background:bg2,border:"1px solid rgba(34,197,94,.3)",borderRadius:6,marginBottom:7}}>
+            <span style={{fontSize:12,fontWeight:600,flex:1}}>{rec?.name||"?"}</span>
+            <span style={{fontSize:11,color:muted,fontFamily:"monospace"}}>Ph {ph} · from {new Date(v.fromDk).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
+            <span style={{fontSize:12,color:"#22c55e"}}>→ {v.ftdName}</span>
+            <button style={btn("none",red,"1px solid "+red)} onClick={()=>uCls(c=>{const r={...c.reassignments};delete r[k];return{reassignments:r};})}>Clear</button>
+          </div>;})}
+      </div>}
+
+            {tab==="schedule"&&<div style={{padding:22,maxWidth:1400,margin:"0 auto"}}>
+        <div style={{fontFamily:"monospace",fontSize:18,fontWeight:600,marginBottom:3}}>Field Training Schedule</div>
+        <div style={{fontSize:12,color:muted,marginBottom:16,lineHeight:1.6}}>Start: <b>{new Date(cls.startDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"})}</b> · {recs.length} recruits · {ftds.length} FTDs · 12-hr rotation<br/><span style={{color:orange}}>🖱 Click any training cell to enter a sick call fill-in.</span></div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:10,marginBottom:18}}>
+          {[[recs.length,"Recruits",blue],[ftds.length,"FTDs",blue],[tFills,"Auto Fill-ins",amber],[tOv,"Sick Calls",tOv>0?orange:muted],[tRem,"Remedial",purple],[tSpec,"Specialty",teal],[tUnass,"Unassigned",tUnass>0?red:green]].map(([val,lbl2,col])=>(
+            <div key={lbl2} style={{background:bg1,border:`1px solid ${bdr}`,borderRadius:8,padding:14}}>
+              <div style={{fontFamily:"monospace",fontSize:22,fontWeight:600,color:col,lineHeight:1,marginBottom:3}}>{val}</div>
+              <div style={{fontSize:10,color:muted}}>{lbl2}</div>
+            </div>
+          ))}
+        </div>
+        {tUnass>0&&<div style={al("w")}><span>⚠</span><span><b>{tUnass} unassigned day(s)</b> — add more FTDs or use sick call override.</span></div>}
+        {tOv>0&&<div style={al("o")}><span>🚨</span><span><b>{tOv} sick call override{tOv!==1?"s":""}</b> recorded — shown in orange.</span></div>}
+        <div style={{display:"flex",gap:4,marginBottom:18}}>
+          <button style={vtab(view==="grid"||view==="both")} onClick={()=>setView("grid")}>📊 Grid</button>
+          <button style={vtab(view==="cards"||view==="both")} onClick={()=>setView("cards")}>🪪 Cards</button>
+          <button style={vtab(view==="both")} onClick={()=>setView("both")}>Both</button>
+        </div>
+        <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:14}}>
+          {[["Ph1","rgba(63,185,80,.15)","#3fb950"],["Ph2","rgba(56,139,253,.15)","#388bfd"],["Ph3","rgba(210,153,34,.15)","#d29922"],["Ph4","rgba(163,113,247,.15)","#a371f7"],["Fill-in (bordered)","rgba(63,185,80,.15)","#3fb950"],["Remedial 🔴","rgba(248,81,73,0.25)",red],["Sick Call","rgba(232,114,74,0.18)",orange],["Specialty","rgba(46,168,168,0.13)",teal],["Unassigned","rgba(248,81,73,0.13)",red],["Off rotation",bg2,muted]].map(([l,bg,col])=>(
+            <div key={l} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:muted}}>
+              <div style={{width:10,height:10,borderRadius:2,background:bg,border:`1px solid ${col}`,flexShrink:0}}></div>{l}
+            </div>
+          ))}
+        </div>
+
+        {recs.length===0&&<div style={{padding:20,textAlign:"center",color:muted,fontSize:13,background:bg1,borderRadius:8,marginBottom:14}}>No recruits yet — add recruits in Setup to generate a schedule.</div>}{recs.length>0&&(view==="grid"||view==="both")&&<div style={{overflowX:"auto",border:`1px solid ${bdr}`,borderRadius:8}}>
+          <table style={{borderCollapse:"collapse",width:"100%"}}>
+            <thead>
+              <tr>
+                <th style={{background:bg2,padding:"3px 10px",fontFamily:"monospace",fontSize:9,fontWeight:600,color:muted,textAlign:"left",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,minWidth:150,position:"sticky",left:0,zIndex:10}}></th>
+                {gridDays.map((day,di)=>{
+                  const visRecs=recs.filter(r=>!exRecs.has(r.id));let m=null;for(const vr of visRecs){m=getEntry(vr.id,dkey(day));if(m&&m.ph?.num)break;}
+                  const ph=m?.ph?.num||0;const isSp=m?.d?.kind==="spec";
+                  const phCols=[null,green,blue,amber,purple];
+                  return <th key={di} style={{background:isSp?"rgba(46,168,168,.15)":ph?phBg(ph):bg2,padding:"2px 4px",fontFamily:"monospace",fontSize:8,fontWeight:700,color:isSp?teal:ph?phCols[ph]:muted,textAlign:"center",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,letterSpacing:.8}}>
+                    {isSp?"SP":ph?`P${ph}`:""}
+                  </th>;
+                })}
+              </tr>
+              <tr>
+                <th style={{background:bg2,padding:"5px 10px",fontFamily:"monospace",fontSize:9,color:muted,textAlign:"left",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,minWidth:150,position:"sticky",left:0,zIndex:10}}>Recruit</th>
+                {gridDays.map((day,di)=>(
+                  <th key={di} style={{background:bg2,padding:"5px 6px",fontFamily:"monospace",fontSize:9,color:muted,textAlign:"center",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,whiteSpace:"nowrap",minWidth:50}}>
+                    <div>{fmtMD(day)}</div>
+                    <div style={{fontSize:8,color:"#6e7681"}}>{["Su","Mo","Tu","We","Th","Fr","Sa"][new Date(day).getDay()]}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {recs.filter(r=>!exRecs.has(r.id)).map((r,ri)=>(
+                <tr key={r.id}>
+                  <td style={{background:bg1,padding:"5px 10px",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,position:"sticky",left:0,zIndex:5,minWidth:150}}>
+                    <div style={{fontWeight:600,fontSize:12}}>{r.name}</div>
+                    <div style={{fontSize:9,color:muted,fontFamily:"monospace"}}>{ROTATIONS[ri%3].map(x=>x[0]).join("→")}</div>
+                  </td>
+                  {gridDays.map((day,di)=>{
+                    const m=getEntry(r.id,dkey(day));
+                    if(!m)return <td key={di} style={{padding:"3px 4px",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,textAlign:"center"}}><span style={{color:"#6e7681",fontSize:9}}>—</span></td>;
+                    const{d}=m;
+                    if(d.kind==="out"||d.isSick){
+                      return(<td key={di} style={{padding:"3px 4px",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,textAlign:"center",cursor:"pointer"}}
+                        onClick={e=>handleCell(e,r,day,d,m.ph.num-1)}>
+                        <span style={{...cell("rgba(248,81,73,0.15)","#f85149"),fontSize:8}}>OUT</span>
+                      </td>);
+                    }
+                    if(d.kind==="spec"){
+                      const ti=SPEC_TYPES.find(t=>t.key===d.sk);
+                      return <td key={di} title={ti?.label+" — click to edit"} style={{padding:"3px 4px",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,textAlign:"center",cursor:"pointer"}} onClick={e=>handleCell(e,r,day,d,m.ph.num-1)}>
+                        <span style={cell(ti?.bg||"rgba(46,168,168,0.13)",ti?.color||teal)}>{ti?.short||"SP"}</span>
+                      </td>;
+                    }
+                    if(!d.ftdId)return(
+                      <td key={di} title="Click to assign fill-in" style={{padding:"3px 4px",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,textAlign:"center",cursor:"pointer"}}
+                        onClick={e=>handleCell(e,r,day,d,m.ph.num-1)}>
+                        <span style={cell("rgba(248,81,73,0.13)",red)}>UNASS</span>
+                      </td>
+                    );
+                    const [cbg,ccol,cbd]=d.isOv?["rgba(232,114,74,0.18)",orange,"1px solid rgba(232,114,74,.5)"]:
+                      d.isRem?["rgba(248,81,73,0.25)",red,"1px solid rgba(248,81,73,.6)"]:
+                      d.isFill?[phBg(m.ph.num),phColor(m.ph.num),"1px solid "+phColor(m.ph.num)]:
+                      [phBg(m.ph.num),phColor(m.ph.num),undefined];
+                    const short=(d.ftdName||"").split(" ").pop().slice(0,6);
+                    return(
+                      <td key={di} style={{padding:"3px 4px",borderBottom:`1px solid ${bdr}`,borderRight:`1px solid ${bdr}`,textAlign:"center",cursor:"pointer"}}
+                        onClick={e=>handleCell(e,r,day,d,m.ph.num-1)}
+                        title={d.ftdName+(d.isFill&&!d.isOv?" (fill for "+d.pName+")":d.isOv?" [SICK CALL OVERRIDE]":"")+(d.isRem?" [REMEDIAL]":"")}>
+                        <span style={cell(cbg,ccol,cbd)}>{short}</span>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>}
+
+        {recs.length>0&&(view==="cards"||view==="both")&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:12}}>
+          {recs.filter(r=>!exRecs.has(r.id)).map((r,ri)=>{
+            const row=sched[r.id];if(!row)return null;;const rot=ROTATIONS[ri%3];
+            const [sbg,scol]=shiftColor(rot[0]);
+            return <div key={r.id} style={{background:bg1,border:`1px solid ${bdr}`,borderRadius:8,overflow:"hidden"}}>
+              <div style={{padding:"11px 13px",background:bg2,display:"flex",alignItems:"center",gap:9,borderBottom:`1px solid ${bdr}`}}>
+                <div style={{width:30,height:30,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,background:"rgba(56,139,253,0.13)",color:blue,flexShrink:0}}>{String(ri+1).padStart(2,"0")}</div>
+                <div style={{fontSize:13,fontWeight:600,flex:1}}>{r.name}</div>
+                <span style={sbadge(sbg,scol)}>↳{rot[0]}</span>
+              </div>
+              <div>
+                {row.phases.map((ph,pi)=>{
+                  const fills=ph.days.filter(d=>d.isFill&&d.ftdId&&!d.isOv);
+                  const ovDs=ph.days.filter(d=>d.isOv);
+                  const unDs=ph.days.filter(d=>d.kind==="train"&&!d.ftdId);
+                  const spDs=ph.days.filter(d=>d.kind==="spec");
+                  const remDs=ph.days.filter(d=>d.isRem&&d.kind==="train");
+                  const fd=ph.days[0]?.date;const ld=ph.days[ph.days.length-1]?.date;
+                  const [pbg2,pcol]=shiftColor(ph.shift);
+                  return <div key={pi} style={{display:"flex",alignItems:"flex-start",gap:9,padding:"9px 13px",borderBottom:`1px solid ${bdr}`}}>
+                    <div style={{width:52,flexShrink:0,marginTop:2}}>
+                      <span style={{background:phBg(ph.num),color:phColor(ph.num),padding:"2px 6px",borderRadius:3,fontSize:9,fontWeight:700}}>Phase {ph.num}</span>
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12,fontWeight:500,marginBottom:2}}>{ph.pftd?.name||"Unassigned"}</div>
+                      <div style={{fontSize:10,color:muted,fontFamily:"monospace",marginBottom:1}}>{fd?fmtS(fd):"—"} → {ld?fmtS(ld):"—"}</div>
+                      <div style={{fontSize:10,color:"#6e7681",fontFamily:"monospace"}}>{ph.total} training{ph.specCnt>0?` +${ph.specCnt} spec`:""}{ph.remEx>0?` +${ph.remEx}rem`:""}</div>
+                      {ovDs.length>0&&<div style={{fontSize:10,color:orange,marginTop:2}}>🚨 {ovDs.length} sick call{ovDs.length>1?"s":""}</div>}
+                      {fills.length>0&&<div style={{fontSize:10,color:amber,marginTop:2}}>⚡ {fills.length} auto fill-in{fills.length>1?"s":""}</div>}
+                      {spDs.filter(d=>d.sk==="ai").length>0&&<div style={{fontSize:10,color:teal,marginTop:2}}>● AI: {spDs.filter(d=>d.sk==="ai").length}d</div>}
+                      {spDs.filter(d=>d.sk==="dui").length>0&&<div style={{fontSize:10,color:red,marginTop:2}}>● DUI: {spDs.filter(d=>d.sk==="dui").length}d</div>}
+                      {remDs.length>0&&<div style={{fontSize:10,color:red,fontWeight:600,marginTop:2}}>🔴 {remDs.length} remedial day{remDs.length>1?"s":""}</div>}
+                      {unDs.length>0&&<div style={{fontSize:10,color:red,marginTop:2}}>⚠ {unDs.length} unassigned</div>}
+                    </div>
+                    <span style={sbadge(pbg2,pcol)}>{ph.shift}</span>
+                  </div>;
+                })}
+              </div>
+            </div>;
+          })}
+        </div>}
+      </div>}
+
+      {popup&&<div style={{position:"fixed",inset:0,zIndex:599}} onClick={()=>setPopup(null)}>
+        <Popup rec={popup.rec} date={popup.date} cur={popup.cur} pName={popup.pName}
+          onSave={saveOv} onClear={clrOv} onClose={()=>setPopup(null)}
+          onSick={()=>toggleSick(popup.rec,popup.dkStr)} isSick={popup.isSick}
+          pi={popup.pi} existingSpec={popup.existingSpec} existingRem={popup.existingRem}
+          isSpec={popup.isSpec} specKey={popup.specKey}
+          onSpecAdd={sk=>addSpecFromGrid(popup.rec,popup.dkStr,popup.pi,sk)}
+          onSpecRemove={sk=>removeSpecFromGrid(popup.rec,popup.dkStr,popup.pi,sk)}
+          shiftFtds={popup.shiftFtds}
+          onRemAdd={days=>addRemFromGrid(popup.rec,popup.pi,days,popup.dkStr)}
+          onRemRemove={()=>removeRemFromGrid(popup.rec,popup.pi)}
+          top={popup.top} left={popup.left}/>
+      </div>}
+    </div>
+  );
+}
+
+</script>
+</body>
+</html>
